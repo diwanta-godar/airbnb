@@ -8,7 +8,10 @@ import { User } from "../entities/User";
 import { BookingStatus, UserRole } from "../entities/enums";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { AppError, asyncHandler } from "../middleware/errorHandler";
-import { publicUploadUrl } from "../middleware/upload";
+import {
+  deletePublicImage,
+  uploadPublicImage,
+} from "../services/storageService";
 import { slugify, stripHtml } from "../utils/security";
 import { param } from "../utils/params";
 import {
@@ -116,7 +119,7 @@ export const listCustomers = asyncHandler(async (_req, res) => {
   }
 
   const customers = Array.from(byKey.values()).sort(
-    (a, b) => b.lastBookingAt.getTime() - a.lastBookingAt.getTime()
+    (a, b) => b.lastBookingAt.getTime() - a.lastBookingAt.getTime(),
   );
 
   res.json({ success: true, data: customers });
@@ -156,21 +159,25 @@ export const createAdminProperty = asyncHandler(async (req, res) => {
             : [],
           images: body.images
             ? typeof body.images === "string"
-              ? (JSON.parse(body.images as unknown as string) as CreatePropertyInput["images"])
+              ? (JSON.parse(
+                  body.images as unknown as string,
+                ) as CreatePropertyInput["images"])
               : body.images
             : [],
         }
       : body;
 
   const files = (req.files as Express.Multer.File[] | undefined) || [];
-  const uploadedImages = files.map((f, index) => {
-    const image = new PropertyImage();
-    image.url = publicUploadUrl(f.filename);
-    image.alt = stripHtml(parsedBody.title);
-    image.sortOrder = index;
-    image.isCover = index === 0;
-    return image;
-  });
+  const uploadedImages = await Promise.all(
+    files.map(async (file, index) => {
+      const image = new PropertyImage();
+      image.url = await uploadPublicImage(file, "properties");
+      image.alt = stripHtml(parsedBody.title);
+      image.sortOrder = index;
+      image.isCover = index === 0;
+      return image;
+    }),
+  );
 
   const urlImages = (parsedBody.images || []).map((img, index) => {
     const image = new PropertyImage();
@@ -289,49 +296,63 @@ export const updateAdminProperty = asyncHandler(async (req, res) => {
   }
   if (body.isFeatured !== undefined) property.isFeatured = body.isFeatured;
   if (body.amenityIds) {
-    property.amenities = await amenityRepo().findBy({ id: In(body.amenityIds) });
+    property.amenities = await amenityRepo().findBy({
+      id: In(body.amenityIds),
+    });
   }
 
   // Remove selected existing images
   let removeImageIds: string[] = [];
-  const rawRemove = (req.body as { removeImageIds?: string | string[] }).removeImageIds;
+  const rawRemove = (req.body as { removeImageIds?: string | string[] })
+    .removeImageIds;
   if (typeof rawRemove === "string" && rawRemove.trim()) {
     try {
       removeImageIds = JSON.parse(rawRemove) as string[];
     } catch {
-      removeImageIds = rawRemove.split(",").map((s) => s.trim()).filter(Boolean);
+      removeImageIds = rawRemove
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
   } else if (Array.isArray(rawRemove)) {
     removeImageIds = rawRemove;
   }
 
   if (removeImageIds.length) {
+    const removedImages = (property.images || []).filter((image) =>
+      removeImageIds.includes(image.id),
+    );
     await imageRepo().delete({
-      id: In(removeImageIds),
+      id: In(removedImages.map((image) => image.id)),
       propertyId: property.id,
     });
+    await Promise.all(
+      removedImages.map((image) => deletePublicImage(image.url)),
+    );
     property.images = (property.images || []).filter(
-      (img) => !removeImageIds.includes(img.id)
+      (img) => !removeImageIds.includes(img.id),
     );
   }
 
   const files = (req.files as Express.Multer.File[] | undefined) || [];
   if (files.length) {
     const start = property.images?.length || 0;
-    const newImages = files.map((f, index) => {
-      const image = new PropertyImage();
-      image.url = publicUploadUrl(f.filename);
-      image.alt = property.title;
-      image.sortOrder = start + index;
-      image.isCover = start === 0 && index === 0;
-      image.propertyId = property.id;
-      return image;
-    });
+    const newImages = await Promise.all(
+      files.map(async (file, index) => {
+        const image = new PropertyImage();
+        image.url = await uploadPublicImage(file, "properties");
+        image.alt = property.title;
+        image.sortOrder = start + index;
+        image.isCover = start === 0 && index === 0;
+        image.propertyId = property.id;
+        return image;
+      }),
+    );
     property.images = [...(property.images || []), ...newImages];
   }
 
   // Ensure at least one image remains
-  if (!(property.images?.length)) {
+  if (!property.images?.length) {
     throw new AppError("A stay must have at least one image", 400);
   }
 

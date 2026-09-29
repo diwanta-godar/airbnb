@@ -70,6 +70,8 @@ DB_NAME=lantern_stay
 
 The example JWT secrets meet the API's minimum length requirement for local development, but replace them with private, randomly generated values for any shared or deployed environment. For example, generate a value with `openssl rand -base64 64` and use separate values for `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET`. Keep `.env` private; it is ignored by Git.
 
+The API also requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `WHATSAPP_AUTH_ENCRYPTION_KEY`, even when using a separate local PostgreSQL server. Create a Supabase Storage bucket named `property-images` and make it public for image reads. Keep the service-role key and encryption key server-side only. Generate a unique encryption key with `openssl rand -base64 48`; retain the same value between restarts or the saved WhatsApp session cannot be decrypted.
+
 Install and start the API:
 
 ```bash
@@ -126,7 +128,7 @@ Development seeding runs when the API starts with `NODE_ENV=development`, but it
 - **Stays (`/stays`, `/stays/[id]`)**: Full property search, filters, details, and booking requests.
 - **Auth (`/auth/login`, `/auth/register`, `/auth/admin-login`)**: User registration and dual role login (Guest/Admin).
 - **Dashboard (`/dashboard`)**: Guest panel to view bookings, wishlists, and profile settings.
-- **Admin Panel (`/admin/*`)**: 
+- **Admin Panel (`/admin/*`)**:
   - Overview of properties (`/admin/stays`)
   - Booking Management (`/admin/bookings`)
   - User/Customer CRM (`/admin/customers`)
@@ -136,23 +138,33 @@ Development seeding runs when the API starts with `NODE_ENV=development`, but it
 ### API, Data & WhatsApp
 
 - Express API with TypeScript and TypeORM connected to PostgreSQL (Supabase).
+- Property and hero image uploads stored in Supabase Storage.
 - Authentication, role checks, input validation, and security middleware.
-- **WhatsApp Integration (Baileys)**: The backend pairs to WhatsApp via a QR Code on the Admin Dashboard. The auth session is stored locally in `WHATSAPP_AUTH_DIR` (default `./whatsapp-auth`).
-  - *Note on Auth Persistence:* The session stays logged in indefinitely until you log out from your phone's "Linked Devices" or delete the `whatsapp-auth` folder.
+- **WhatsApp Integration (Baileys)**: The backend pairs to WhatsApp via a QR Code on the Admin Dashboard. Credentials and Signal keys are encrypted and stored in Supabase PostgreSQL, so they survive backend restarts. Keep `WHATSAPP_AUTH_ENCRYPTION_KEY` secret and unchanged. Log out from WhatsApp's "Linked Devices" or clear the `whatsapp_auth_state` table to pair a different account.
 
 ## How to Host Completely for Free
 
 To run this prototype in production with $0 cost, you can combine these services:
 
 1. **Database: Supabase (Free Tier)**
-   - Provides a managed PostgreSQL database.
-   - Use the Session Pooler connection string in your backend `.env`.
+   - The Express API connects to Supabase PostgreSQL using the Session Pooler values.
+   - Create a public `property-images` Storage bucket. The backend uploads images with its server-only service-role key; never expose that key to the browser.
+   - WhatsApp credentials and Signal keys are encrypted and stored in the `whatsapp_auth_state` table. Keep `WHATSAPP_AUTH_ENCRYPTION_KEY` stable and secret. After the API creates this table on first startup, run this once in Supabase SQL Editor to block Data API access to the session table:
+     ```sql
+     ALTER TABLE public.whatsapp_auth_state ENABLE ROW LEVEL SECURITY;
+     REVOKE ALL ON TABLE public.whatsapp_auth_state FROM anon, authenticated;
+     ```
 2. **Backend API: Render.com (Free Web Service)**
    - Connect your GitHub repo to a Render Web Service.
-   - **Important Note on WhatsApp:** Render's free tier uses an *ephemeral disk*. This means every time Render restarts or sleeps (which happens after 15 mins of inactivity), the `./whatsapp-auth` folder is wiped. You would need to rescan the QR code. To avoid this for free, you would need to modify the WhatsApp service to save credentials to Supabase/PostgreSQL instead of the local filesystem.
+   - Set the backend root directory to `Airbnb-Prototype-Backend-main`, build command to `npm ci && npm run build`, start command to `npm start`, and health check path to `/api/health`.
+   - Configure the backend environment variables in Render, including the Supabase pooler values, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET=property-images`, and a persistent `WHATSAPP_AUTH_ENCRYPTION_KEY`. Never commit these values.
+   - The first deployment does not migrate existing local image files or the old `whatsapp-auth/` session. Re-upload old images and pair WhatsApp once after deploy; subsequent session state is stored in Supabase PostgreSQL.
 3. **Frontend Website: Vercel or Netlify (Free Hobby Tier)**
    - Connect your GitHub repo.
+   - Set the frontend root directory to `Airbnb-Prototype-Frontend-main`.
    - Set `NEXT_PUBLIC_API_URL` to your Render API URL (e.g., `https://your-api.onrender.com/api`).
+
+Free tiers have quotas, pauses, and provider-specific usage rules; they are suitable for a small demo, not an always-on production guarantee. Check the providers' current terms, including Vercel Hobby's personal/non-commercial restriction.
 
 The main API route groups are `/api/auth`, `/api/properties`, `/api/bookings`, `/api/reviews`, `/api/users`, `/api/hero-slides`, and `/api/admin`. Health check: `GET /api/health`.
 
@@ -202,13 +214,16 @@ The backend `.env.example` lists all supported settings. The most commonly chang
 | `COOKIE_SECURE`                                           | Set to `true` when serving over HTTPS in production                               |
 | `SEED_ON_START`                                           | Run seeding on server startup when explicitly enabled                             |
 | `ADMIN_NOTIFY_PHONE`                                      | Optional admin phone number for WhatsApp notifications                            |
-| `WHATSAPP_AUTH_DIR`                                       | Directory used to store WhatsApp session credentials                              |
+| `SUPABASE_URL`                                            | Supabase project URL used by the backend Storage client                           |
+| `SUPABASE_SERVICE_ROLE_KEY`                               | Server-only key used for Storage uploads; never expose it to the frontend         |
+| `SUPABASE_STORAGE_BUCKET`                                 | Storage bucket name; defaults to `property-images`                                |
+| `WHATSAPP_AUTH_ENCRYPTION_KEY`                            | Stable secret (at least 32 characters) used to encrypt WhatsApp session state     |
 
 The frontend's optional `NEXT_PUBLIC_API_URL` setting should include the `/api` suffix.
 
 ## Troubleshooting
 
-- **API exits during startup:** Check that PostgreSQL is running and that all `DB_*` values in the backend `.env` match your database. Required variables, including both JWT secrets and `CORS_ORIGINS`, must be present.
+- **API exits during startup:** Check that PostgreSQL is running and that the backend `.env` contains valid `DB_*`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WHATSAPP_AUTH_ENCRYPTION_KEY`, JWT secret, and `CORS_ORIGINS` values.
 - **Website loads but data requests fail:** Confirm `http://localhost:4000/api/health` works, then check `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS`. Restart the relevant development server after changing `.env` files.
 - **Port already in use:** Stop the process using port `3000` or `4000`, or configure another port. If you change the API port, update the frontend API URL and backend CORS origin if the website port also changes.
 - **No stays appear:** Development seeding skips when property data already exists. Check the API terminal for seed output and confirm the site is using the expected API/database.
@@ -217,4 +232,4 @@ The frontend's optional `NEXT_PUBLIC_API_URL` setting should include the `/api` 
 
 ## Security and data notes
 
-This is a prototype intended for local development. Do not expose it publicly with the sample credentials, example JWT secrets, permissive development settings, or an unreviewed database configuration. Back up any database before using force-seeding; it truncates application tables. Keep `.env`, `.env.local`, uploaded files, and WhatsApp authentication data private.
+This is a prototype intended for local development. Do not expose it publicly with the sample credentials, example JWT secrets, permissive development settings, or an unreviewed database configuration. Back up any database before using force-seeding; it truncates application tables. The `property-images` bucket is public-read, so only upload content intended to be public. Keep `.env`, `.env.local`, service-role keys, and the WhatsApp encryption key private.

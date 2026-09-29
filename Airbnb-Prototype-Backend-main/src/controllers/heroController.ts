@@ -1,7 +1,10 @@
 import { AppDataSource } from "../config/database";
 import { HeroSlide } from "../entities/HeroSlide";
 import { AppError, asyncHandler } from "../middleware/errorHandler";
-import { publicHeroUploadUrl } from "../middleware/upload";
+import {
+  deletePublicImage,
+  uploadPublicImage,
+} from "../services/storageService";
 import { stripHtml } from "../utils/security";
 import { param } from "../utils/params";
 
@@ -72,7 +75,7 @@ export const createAdminHeroSlide = asyncHandler(async (req, res) => {
   const parsed = parseSlideBody(req.body as Record<string, unknown>, true);
   const file = req.file as Express.Multer.File | undefined;
   const imageUrl = file
-    ? publicHeroUploadUrl(file.filename)
+    ? await uploadPublicImage(file, "hero")
     : parsed.imageUrl;
 
   if (!imageUrl) {
@@ -121,7 +124,12 @@ export const updateAdminHeroSlide = asyncHandler(async (req, res) => {
   if (parsed.isActive !== undefined) slide.isActive = parsed.isActive;
 
   if (file) {
-    slide.imageUrl = publicHeroUploadUrl(file.filename);
+    const previousImageUrl = slide.imageUrl;
+    slide.imageUrl = await uploadPublicImage(file, "hero");
+    const saved = await heroRepo().save(slide);
+    await deletePublicImage(previousImageUrl);
+    res.json({ success: true, data: saved });
+    return;
   } else if (parsed.imageUrl) {
     slide.imageUrl = parsed.imageUrl;
   }
@@ -134,6 +142,8 @@ export const deleteAdminHeroSlide = asyncHandler(async (req, res) => {
   const id = param(req.params.id);
   const slide = await heroRepo().findOne({ where: { id } });
   if (!slide) throw new AppError("Hero slide not found", 404);
+  const imageUrl = slide.imageUrl;
   await heroRepo().remove(slide);
+  await deletePublicImage(imageUrl);
   res.json({ success: true, message: "Hero slide deleted" });
 });

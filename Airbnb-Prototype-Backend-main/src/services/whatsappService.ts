@@ -1,16 +1,29 @@
-import fs from "fs";
-import path from "path";
 import QRCode from "qrcode";
 import pino from "pino";
+import { clearTimeout, setTimeout } from "node:timers";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "crypto";
 import makeWASocket, {
   DisconnectReason,
-  useMultiFileAuthState,
-  WASocket,
+  BufferJSON,
+  initAuthCreds,
+  makeCacheableSignalKeyStore,
+  type AuthenticationCreds,
+  type AuthenticationState,
+  type SignalDataTypeMap,
+  type SignalKeyStore,
+  type WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
+import { In } from "typeorm";
 import { env } from "../config/env";
 import { AppDataSource } from "../config/database";
 import { WhatsAppMessage } from "../entities/WhatsAppMessage";
+import { WhatsAppAuthState } from "../entities/WhatsAppAuthState";
 import {
   broadcastWhatsAppStatus,
   broadcastWhatsAppMessage,
@@ -29,24 +42,115 @@ type PendingAlert = {
   timestamp?: string;
 };
 
+const authEncryptionKey = createHash("sha256")
+  .update(env.WHATSAPP_AUTH_ENCRYPTION_KEY)
+  .digest();
+
+function serializeAuthValue(value: unknown): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", authEncryptionKey, iv);
+  const encrypted = Buffer.concat([
+    cipher.update(JSON.stringify(value, BufferJSON.replacer), "utf8"),
+    cipher.final(),
+  ]);
+  return `v1.${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${encrypted.toString("base64")}`;
+}
+
+function deserializeAuthValue<T>(value: unknown): T {
+  if (typeof value !== "string") {
+    throw new Error("Stored WhatsApp auth state is invalid");
+  }
+
+  const [version, encodedIv, encodedTag, encodedData] = value.split(".");
+  if (version !== "v1" || !encodedIv || !encodedTag || !encodedData) {
+    throw new Error("Stored WhatsApp auth state has an unsupported format");
+  }
+
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    authEncryptionKey,
+    Buffer.from(encodedIv, "base64"),
+  );
+  decipher.setAuthTag(Buffer.from(encodedTag, "base64"));
+  const json = Buffer.concat([
+    decipher.update(Buffer.from(encodedData, "base64")),
+    decipher.final(),
+  ]).toString("utf8");
+  return JSON.parse(json, BufferJSON.reviver) as T;
+}
+
+async function createPostgresAuthState(): Promise<{
+  state: AuthenticationState;
+  saveCreds: () => Promise<void>;
+}> {
+  const repository = AppDataSource.getRepository(WhatsAppAuthState);
+  const storedCreds = await repository.findOneBy({ key: "creds" });
+  const creds = storedCreds
+    ? deserializeAuthValue<AuthenticationCreds>(storedCreds.value)
+    : initAuthCreds();
+
+  const keyStore: SignalKeyStore = {
+    async get<T extends keyof SignalDataTypeMap>(type: T, ids: string[]) {
+      const rows = await repository.findBy({
+        key: In(ids.map((id) => `${type}-${id}`)),
+      });
+      const result: Record<string, SignalDataTypeMap[T]> = {};
+      for (const row of rows) {
+        const id = row.key.slice(type.length + 1);
+        result[id] = deserializeAuthValue<SignalDataTypeMap[T]>(row.value);
+      }
+      return result;
+    },
+    async set(data) {
+      for (const [type, entries] of Object.entries(data) as Array<
+        [keyof SignalDataTypeMap, Record<string, unknown | null>]
+      >) {
+        await Promise.all(
+          Object.entries(entries).map(([id, value]) => {
+            const key = `${type}-${id}`;
+            if (value === null)
+              return repository.delete({ key }).then(() => undefined);
+            return AppDataSource.query(
+              `INSERT INTO whatsapp_auth_state (key, value)
+               VALUES ($1, $2::jsonb)
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+              [key, JSON.stringify(serializeAuthValue(value))],
+            ).then(() => undefined);
+          }),
+        );
+      }
+    },
+    async clear() {
+      await repository.clear();
+    },
+  };
+
+  return {
+    state: {
+      creds,
+      keys: makeCacheableSignalKeyStore(keyStore, pino({ level: "silent" })),
+    },
+    saveCreds: async () => {
+      await AppDataSource.query(
+        `INSERT INTO whatsapp_auth_state (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        ["creds", JSON.stringify(serializeAuthValue(creds))],
+      );
+    },
+  };
+}
+
 class WhatsAppService {
   private sock: WASocket | null = null;
-  private authDir: string;
   private status: WhatsAppStatusPayload["status"] = "disconnected";
   private currentQrDataUrl: string | null = null;
   private userPhone: string | null = null;
-  private syncTimeoutTimer: NodeJS.Timeout | null = null;
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private syncTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isInitializing = false;
   private pendingAlerts: PendingAlert[] = [];
   private syncTimeoutMs = 60000;
-
-  constructor() {
-    this.authDir = path.resolve(
-      process.cwd(),
-      env.WHATSAPP_AUTH_DIR || "./whatsapp-auth"
-    );
-  }
 
   public getStatus(): WhatsAppStatusPayload {
     return {
@@ -87,10 +191,6 @@ class WhatsAppService {
     this.clearReconnectTimer();
 
     try {
-      if (!fs.existsSync(this.authDir)) {
-        fs.mkdirSync(this.authDir, { recursive: true });
-      }
-
       // Tear down previous socket cleanly to avoid 440 conflict loops
       if (this.sock) {
         try {
@@ -104,11 +204,11 @@ class WhatsAppService {
         this.sock = null;
       }
 
-      console.log(`[WhatsApp] Initializing session from: ${this.authDir}`);
+      console.log("[WhatsApp] Initializing session from Supabase PostgreSQL");
       this.updateStatus("connecting", this.currentQrDataUrl);
       this.startSyncWatchdog();
 
-      const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+      const { state, saveCreds } = await createPostgresAuthState();
 
       this.sock = makeWASocket({
         auth: state,
@@ -120,7 +220,11 @@ class WhatsAppService {
         markOnlineOnConnect: false,
       });
 
-      this.sock.ev.on("creds.update", saveCreds);
+      this.sock.ev.on("creds.update", () => {
+        void saveCreds().catch((error) => {
+          console.error("[WhatsApp] Failed to persist credentials:", error);
+        });
+      });
 
       this.sock.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -146,10 +250,11 @@ class WhatsAppService {
           const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
           const loggedOut = reason === DisconnectReason.loggedOut;
           // 440 = connection replaced by another open socket — back off harder
-          const conflict = reason === 440 || reason === DisconnectReason.connectionReplaced;
+          const conflict =
+            reason === 440 || reason === DisconnectReason.connectionReplaced;
 
           console.log(
-            `[WhatsApp] Connection closed. Reason: ${reason}. LoggedOut: ${loggedOut}`
+            `[WhatsApp] Connection closed. Reason: ${reason}. LoggedOut: ${loggedOut}`,
           );
           this.userPhone = null;
 
@@ -168,7 +273,9 @@ class WhatsAppService {
           this.userPhone = jid.split(":")[0] || jid.split("@")[0] || null;
           this.currentQrDataUrl = null;
           this.updateStatus("connected", null);
-          console.log(`[WhatsApp] Connected successfully! Account: ${this.userPhone}`);
+          console.log(
+            `[WhatsApp] Connected successfully! Account: ${this.userPhone}`,
+          );
           void this.flushPendingAlerts();
           void this.resendLatestBookingIfNeeded();
         }
@@ -190,15 +297,16 @@ class WhatsAppService {
           if (!text.trim()) continue;
 
           const participantId =
-            (msg.key as { participant?: string; remoteJidAlt?: string }).participant ||
+            (msg.key as { participant?: string; remoteJidAlt?: string })
+              .participant ||
             (msg.key as { remoteJidAlt?: string }).remoteJidAlt;
           const resolvedPhone = this.normalizePhone(
-            this.resolvePhoneNumber(remoteJid, participantId)
+            await this.resolvePhoneNumber(remoteJid, participantId),
           );
           const senderName = msg.pushName || null;
 
           console.log(
-            `[WhatsApp] Incoming from +${resolvedPhone}: "${text.slice(0, 80)}"`
+            `[WhatsApp] Incoming from +${resolvedPhone}: "${text.slice(0, 80)}"`,
           );
 
           let savedMsg: WhatsAppMessage | null = null;
@@ -214,7 +322,7 @@ class WhatsAppService {
                   messageText: text,
                   whatsappMessageId: msg.key.id || null,
                   status: "received",
-                })
+                }),
               );
             }
           } catch (dbErr) {
@@ -230,20 +338,22 @@ class WhatsAppService {
               direction: "incoming",
               messageText: text,
               createdAt: new Date(),
-            }
+            },
           );
 
           try {
-            const { createWhatsAppReplyNotification } = await import(
-              "./notificationService"
-            );
+            const { createWhatsAppReplyNotification } =
+              await import("./notificationService");
             await createWhatsAppReplyNotification({
               phoneNumber: resolvedPhone,
               senderName,
               messageText: text,
             });
           } catch (notifyErr) {
-            console.warn("[WhatsApp] Failed to create admin notification:", notifyErr);
+            console.warn(
+              "[WhatsApp] Failed to create admin notification:",
+              notifyErr,
+            );
           }
         }
       });
@@ -276,7 +386,9 @@ class WhatsAppService {
       if (this.status === "connected") return;
       // Don't wipe auth while waiting for QR scan
       if (this.status === "qr_ready") return;
-      console.warn("[WhatsApp] Connection hung — soft reconnect (keeping auth)");
+      console.warn(
+        "[WhatsApp] Connection hung — soft reconnect (keeping auth)",
+      );
       this.scheduleReconnect(1000);
     }, this.syncTimeoutMs);
   }
@@ -297,17 +409,20 @@ class WhatsAppService {
     try {
       if (this.sock) {
         try {
+          this.sock.ev.removeAllListeners("connection.update");
+          this.sock.ev.removeAllListeners("creds.update");
+          this.sock.ev.removeAllListeners("messages.upsert");
           this.sock.end(undefined);
         } catch {
           // ignore
         }
         this.sock = null;
       }
-      if (fs.existsSync(this.authDir)) {
-        fs.rmSync(this.authDir, { recursive: true, force: true });
+      if (AppDataSource.isInitialized) {
+        await AppDataSource.getRepository(WhatsAppAuthState).clear();
       }
     } catch (err) {
-      console.error("[WhatsApp] Error wiping auth folder:", err);
+      console.error("[WhatsApp] Error clearing stored auth state:", err);
     }
 
     this.currentQrDataUrl = null;
@@ -318,7 +433,7 @@ class WhatsAppService {
 
   private updateStatus(
     status: WhatsAppStatusPayload["status"],
-    qrCode: string | null
+    qrCode: string | null,
   ): void {
     this.status = status;
     this.currentQrDataUrl = qrCode;
@@ -329,21 +444,22 @@ class WhatsAppService {
     });
   }
 
-  public resolvePhoneNumber(jidOrPhone: string, participant?: string | null): string {
+  public async resolvePhoneNumber(
+    jidOrPhone: string,
+    participant?: string | null,
+  ): Promise<string> {
     const target = participant || jidOrPhone;
     const cleanDigits = target.split("@")[0].split(":")[0].replace(/\D/g, "");
 
     try {
-      const reverseFile = path.resolve(
-        this.authDir,
-        `lid-mapping-${cleanDigits}_reverse.json`
-      );
-      if (fs.existsSync(reverseFile)) {
-        const content = fs.readFileSync(reverseFile, "utf8").trim();
-        const parsed = JSON.parse(content);
-        if (typeof parsed === "string" && parsed.length >= 7) {
-          return this.normalizePhone(parsed);
-        }
+      const mapping = await AppDataSource.getRepository(
+        WhatsAppAuthState,
+      ).findOneBy({
+        key: `lid-mapping-${cleanDigits}_reverse`,
+      });
+      if (mapping) {
+        const phoneNumber = deserializeAuthValue<string>(mapping.value);
+        if (phoneNumber.length >= 7) return this.normalizePhone(phoneNumber);
       }
     } catch {
       // ignore
@@ -354,7 +470,9 @@ class WhatsAppService {
 
   public async sendMessage(toPhone: string, text: string): Promise<boolean> {
     if (!this.sock || this.status !== "connected") {
-      throw new Error("WhatsApp is not connected. Please scan the QR code first.");
+      throw new Error(
+        "WhatsApp is not connected. Please scan the QR code first.",
+      );
     }
 
     const cleanPhone = this.normalizePhone(toPhone);
@@ -380,7 +498,7 @@ class WhatsAppService {
               messageText: text,
               whatsappMessageId: result?.key?.id || null,
               status: "sent",
-            })
+            }),
           );
         }
       } catch (dbErr) {
@@ -396,7 +514,7 @@ class WhatsAppService {
           direction: "outgoing",
           messageText: text,
           createdAt: new Date(),
-        }
+        },
       );
 
       return true;
@@ -464,12 +582,12 @@ We have received your details and our team will coordinate your check-in. You ca
       try {
         await this.sendMessage(customerPhoneClean, customerMsg);
         console.log(
-          `[WhatsApp] Confirmation sent to customer +${customerPhoneClean}`
+          `[WhatsApp] Confirmation sent to customer +${customerPhoneClean}`,
         );
       } catch (custErr) {
         console.warn(
           `[WhatsApp] Could not send confirmation to customer +${customerPhoneClean}:`,
-          custErr
+          custErr,
         );
       }
     }
@@ -478,7 +596,7 @@ We have received your details and our team will coordinate your check-in. You ca
   private async flushPendingAlerts() {
     if (!this.pendingAlerts.length) return;
     console.log(
-      `[WhatsApp] Flushing ${this.pendingAlerts.length} queued booking alert(s)...`
+      `[WhatsApp] Flushing ${this.pendingAlerts.length} queued booking alert(s)...`,
     );
     const queue = [...this.pendingAlerts];
     this.pendingAlerts = [];
@@ -533,7 +651,7 @@ We have received your details and our team will coordinate your check-in. You ca
 
     if (!adminPhone && !this.isConnected()) {
       console.warn(
-        "[WhatsApp] No notify phone and not connected — queuing alert anyway"
+        "[WhatsApp] No notify phone and not connected — queuing alert anyway",
       );
     }
 
@@ -544,7 +662,7 @@ We have received your details and our team will coordinate your check-in. You ca
         this.pendingAlerts = this.pendingAlerts.slice(-30);
       }
       console.warn(
-        `[WhatsApp] Not connected — queued booking alert (${this.pendingAlerts.length} pending). Scan QR in Admin → WhatsApp.`
+        `[WhatsApp] Not connected — queued booking alert (${this.pendingAlerts.length} pending). Scan QR in Admin → WhatsApp.`,
       );
       return;
     }

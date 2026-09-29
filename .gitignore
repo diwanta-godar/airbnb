@@ -1,0 +1,14 @@
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/coverage/
+**/.vercel/
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.template
+**/uploads/
+**/whatsapp-auth/
+*.log
+.DS_Store

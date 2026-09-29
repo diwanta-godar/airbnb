@@ -12,6 +12,7 @@ import { Amenity } from "../entities/Amenity";
 import { WhatsAppMessage } from "../entities/WhatsAppMessage";
 import { AdminNotification } from "../entities/AdminNotification";
 import { HeroSlide } from "../entities/HeroSlide";
+import { WhatsAppAuthState } from "../entities/WhatsAppAuthState";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -34,6 +35,7 @@ export const AppDataSource = new DataSource({
     WhatsAppMessage,
     AdminNotification,
     HeroSlide,
+    WhatsAppAuthState,
   ],
   ssl: env.DB_SSL ? { rejectUnauthorized: false } : false,
 });
@@ -94,7 +96,7 @@ export async function ensureSchema() {
     console.log(
       tablesExist
         ? "DB_SYNCHRONIZE=true — updating schema..."
-        : "Database tables missing — creating schema..."
+        : "Database tables missing — creating schema...",
     );
   }
 
@@ -173,4 +175,3 @@ async function seedDefaultHeroSlides() {
     console.warn("[DB] Hero slide seed skipped:", err);
   }
 }
-

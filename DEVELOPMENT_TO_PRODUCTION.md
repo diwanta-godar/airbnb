@@ -23,6 +23,10 @@ DB_USER=<session-pooler-username-from-supabase>
 DB_PASSWORD=<development-project-database-password>
 DB_NAME=postgres
 DB_SSL=true
+SUPABASE_URL=https://<development-project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<development-project-service-role-key>
+SUPABASE_STORAGE_BUCKET=property-images
+WHATSAPP_AUTH_ENCRYPTION_KEY=<unique-random-secret-at-least-32-characters>
 COOKIE_SECURE=false
 COOKIE_SAME_SITE=lax
 CORS_ORIGINS=http://localhost:3000
@@ -62,11 +66,21 @@ Development seeding only runs when `NODE_ENV=development` and skips if property 
 
 ## 4. Before Deploying
 
+The backend now stores newly uploaded property and hero images in Supabase Storage. Create a bucket named `property-images` in Supabase Storage and set it to **Public** so the website can display image URLs. Only the backend should upload or delete objects, using the Supabase service-role key. Never add that key to the frontend or a `NEXT_PUBLIC_*` variable.
+
+WhatsApp credentials and Signal keys are now stored encrypted in the `whatsapp_auth_state` PostgreSQL table. The table is created by backend schema synchronization. After the API has started once, restrict access through the Data API in Supabase SQL Editor:
+
+```sql
+ALTER TABLE public.whatsapp_auth_state ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.whatsapp_auth_state FROM anon, authenticated;
+```
+
+Set `WHATSAPP_AUTH_ENCRYPTION_KEY` to a unique, stable secret of at least 32 characters. Generate one with `openssl rand -base64 48`; keep it in Render's secret environment settings and a secure backup. Changing or losing this key makes the stored WhatsApp session unreadable and requires pairing again. Existing files in `uploads/` and `whatsapp-auth/` are not imported automatically: re-upload those images and scan the WhatsApp QR code once after deploying this version.
+
 Do not deploy this prototype publicly without first addressing these items:
 
 - Rotate the Supabase database password if it has been shared or exposed, then update `.env` and the hosting secret configuration.
 - Remove the hardcoded account-role promotion in `Airbnb-Prototype-Backend-main/src/config/database.ts` and establish a secure production admin provisioning process.
-- Replace the development filesystem image uploads. `Airbnb-Prototype-Backend-main/src/middleware/upload.ts` writes files to the service's local disk, which is ephemeral on common free hosts. Use Supabase Storage or another persistent object store before relying on uploaded images.
 - Review authentication/session storage and browser cookie behavior for production.
 - Replace automatic `synchronize()` schema changes with reviewed database migrations before treating the database as production data. Back up data before schema changes.
 - Do not seed production with the demo accounts or sample data.
@@ -89,6 +103,10 @@ DB_USER=<production-session-pooler-username>
 DB_PASSWORD=<production-project-database-password>
 DB_NAME=postgres
 DB_SSL=true
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<server-only-service-role-key>
+SUPABASE_STORAGE_BUCKET=property-images
+WHATSAPP_AUTH_ENCRYPTION_KEY=<stable-random-secret-at-least-32-characters>
 COOKIE_SECURE=true
 COOKIE_SAME_SITE=none
 CORS_ORIGINS=https://<your-vercel-site>.vercel.app

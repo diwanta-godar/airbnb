@@ -1,6 +1,5 @@
 import "reflect-metadata";
 import http from "http";
-import path from "path";
 import express from "express";
 import { AppDataSource, ensureSchema } from "./config/database";
 import { env } from "./config/env";
@@ -22,14 +21,6 @@ async function bootstrap() {
 
   const app = express();
   applySecurity(app);
-
-  app.use(
-    "/uploads",
-    express.static(path.resolve(process.cwd(), "uploads"), {
-      maxAge: "7d",
-      fallthrough: true,
-    })
-  );
 
   app.use("/api", routes);
   app.use(notFoundHandler);

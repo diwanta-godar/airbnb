@@ -4,13 +4,19 @@ import { z } from "zod";
 dotenv.config();
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "production", "test"])
+    .default("development"),
   PORT: z.coerce.number().default(4000),
   DB_HOST: z.string().min(1),
   DB_PORT: z.coerce.number().default(5432),
   DB_USER: z.string().min(1),
   DB_PASSWORD: z.string().min(1),
   DB_NAME: z.string().min(1),
+  SUPABASE_URL: z.string().url(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  SUPABASE_STORAGE_BUCKET: z.string().default("property-images"),
+  WHATSAPP_AUTH_ENCRYPTION_KEY: z.string().min(32),
   DB_SSL: z
     .enum(["true", "false"])
     .default("false")
@@ -43,13 +49,15 @@ const envSchema = z.object({
   APP_NAME: z.string().default("The Lantern Stay"),
   BCRYPT_ROUNDS: z.coerce.number().default(12),
   ADMIN_NOTIFY_PHONE: z.string().default(""),
-  WHATSAPP_AUTH_DIR: z.string().default("./whatsapp-auth"),
 });
 
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error("Invalid environment configuration:", parsed.error.flatten().fieldErrors);
+  console.error(
+    "Invalid environment configuration:",
+    parsed.error.flatten().fieldErrors,
+  );
   process.exit(1);
 }
 
