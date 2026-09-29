@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BUSINESS_PHONE, BUSINESS_PHONE_HREF } from "@/lib/contact";
 
 export const metadata: Metadata = {
   title: "Contact",
@@ -17,13 +18,8 @@ export default function ContactPage() {
           <div>
             <p className="text-sm font-semibold text-ink">Phone</p>
             <p className="mt-1">
-              <a href="tel:+9779814818429" className="hover:underline">
-                +977 9814818429
-              </a>
-            </p>
-            <p>
-              <a href="tel:+9779700810681" className="hover:underline">
-                +977 9700810681
+              <a href={BUSINESS_PHONE_HREF} className="hover:underline">
+                {BUSINESS_PHONE}
               </a>
             </p>
           </div>

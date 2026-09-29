@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { BUSINESS_PHONE } from "@/lib/contact";
 
 export const metadata: Metadata = {
   title: "About",
@@ -40,8 +41,7 @@ export default function AboutPage() {
           <div>
             <h2 className="text-xl font-semibold text-ink">How to reach us</h2>
             <div className="mt-3 space-y-1 text-muted">
-              <p>+977 9814818429</p>
-              <p>+977 9700810681</p>
+              <p>{BUSINESS_PHONE}</p>
               <p>thelanternstay@gmail.com</p>
             </div>
           </div>

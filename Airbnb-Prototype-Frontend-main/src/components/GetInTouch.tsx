@@ -3,12 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronUp, FileText, Phone } from "lucide-react";
-
-const PRIMARY_PHONE = "+9779814818429";
-const PRIMARY_PHONE_LABEL = "+977 9814818429";
-const SECONDARY_PHONE = "+9779700810681";
-const SECONDARY_PHONE_LABEL = "+977 9700810681";
-const WHATSAPP_URL = `https://wa.me/9779814818429`;
+import {
+  BUSINESS_PHONE,
+  BUSINESS_PHONE_HREF,
+  BUSINESS_WHATSAPP_HREF,
+} from "@/lib/contact";
 
 type Props = {
   onHome?: boolean;
@@ -16,22 +15,15 @@ type Props = {
 
 const items = [
   {
-    key: "phone-1",
-    href: `tel:${PRIMARY_PHONE}`,
-    label: PRIMARY_PHONE_LABEL,
-    external: false,
-    icon: "phone" as const,
-  },
-  {
-    key: "phone-2",
-    href: `tel:${SECONDARY_PHONE}`,
-    label: SECONDARY_PHONE_LABEL,
+    key: "phone",
+    href: BUSINESS_PHONE_HREF,
+    label: BUSINESS_PHONE,
     external: false,
     icon: "phone" as const,
   },
   {
     key: "whatsapp",
-    href: WHATSAPP_URL,
+    href: BUSINESS_WHATSAPP_HREF,
     label: "WhatsApp",
     external: true,
     icon: "whatsapp" as const,
