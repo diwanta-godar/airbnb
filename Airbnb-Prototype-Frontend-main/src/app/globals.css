@@ -1,0 +1,280 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #1c1917;
+  --color-muted: #57534e;
+  --color-line: #e7e5e4;
+  --color-paper: #fafaf9;
+  --color-white: #ffffff;
+  --color-accent: #b45309;
+  --color-accent-dark: #92400e;
+  --color-forest: #3f6212;
+  --font-sans: "Karla", ui-sans-serif, system-ui, sans-serif;
+  --font-brand: "Libre Baskerville", Georgia, serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+::selection {
+  background: #fde68a;
+}
+
+.font-brand {
+  font-family: var(--font-brand);
+}
+
+.hero-shade {
+  background: linear-gradient(
+    to top,
+    rgba(28, 25, 23, 0.78) 0%,
+    rgba(28, 25, 23, 0.35) 45%,
+    rgba(28, 25, 23, 0.2) 100%
+  );
+}
+
+.page-shell {
+  padding-top: 5.5rem;
+  padding-bottom: 4rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--color-accent-dark);
+}
+
+.btn-dark {
+  background: var(--color-ink);
+  color: white;
+}
+
+.btn-dark:hover {
+  background: #44403c;
+}
+
+.btn-ghost {
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  color: white;
+  background: transparent;
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.field {
+  width: 100%;
+  border: 1px solid var(--color-line);
+  background: white;
+  border-radius: 0.375rem;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.field:focus {
+  border-color: #a8a29e;
+}
+
+/* Get In Touch — clean glass menu */
+.git-trigger {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.26) 0%,
+    rgba(255, 255, 255, 0.1) 100%
+  );
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 6px 18px rgba(28, 25, 23, 0.1);
+}
+
+.git-trigger:hover {
+  transform: translateY(-1px);
+}
+
+.git-trigger-open {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.git-trigger-glow {
+  pointer-events: none;
+  position: absolute;
+  inset: -40% auto auto -30%;
+  width: 70%;
+  height: 160%;
+  background: linear-gradient(
+    110deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.4) 45%,
+    transparent 70%
+  );
+  transform: translateX(-120%) rotate(12deg);
+  transition: transform 0.7s ease;
+}
+
+.git-trigger:hover .git-trigger-glow,
+.git-trigger-open .git-trigger-glow {
+  transform: translateX(220%) rotate(12deg);
+}
+
+.git-panel {
+  transform-origin: top right;
+  filter: drop-shadow(0 14px 30px rgba(28, 25, 23, 0.22));
+}
+
+.git-panel-out {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.97);
+}
+
+.git-panel-in {
+  animation: git-panel-enter 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes git-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.git-glass {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(28px) saturate(165%);
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.git-glass-shine {
+  position: absolute;
+  top: -50%;
+  left: -20%;
+  width: 70%;
+  height: 100%;
+  background: radial-gradient(
+    circle at 30% 20%,
+    rgba(255, 255, 255, 0.45),
+    transparent 60%
+  );
+  animation: git-shine 6s ease-in-out infinite;
+}
+
+.git-glass-fill {
+  position: absolute;
+  inset: auto -20% -40% -20%;
+  height: 70%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(212, 122, 59, 0.12) 40%,
+    rgba(255, 255, 255, 0.18)
+  );
+  animation: git-fill 7s ease-in-out infinite;
+}
+
+@keyframes git-shine {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: translate(0, 0);
+  }
+  50% {
+    opacity: 0.85;
+    transform: translate(12%, 8%);
+  }
+}
+
+@keyframes git-fill {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.7;
+  }
+  50% {
+    transform: translateY(-12%);
+    opacity: 1;
+  }
+}
+
+.git-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #1c1917;
+  opacity: 0;
+  transform: translateY(6px);
+  animation: git-row-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  transition: background-color 0.18s ease;
+}
+
+.git-row:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+li + li .git-row {
+  border-top: 1px solid rgba(28, 25, 23, 0.08);
+}
+
+@keyframes git-row-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .git-trigger-glow,
+  .git-glass-shine,
+  .git-glass-fill,
+  .git-panel-in,
+  .git-row {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1;
+    transform: none;
+  }
+}
+
